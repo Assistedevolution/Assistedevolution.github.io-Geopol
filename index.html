@@ -1,0 +1,129 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <title>Strength Cloud Graph</title>
+  <script src="https://d3js.org/d3.v7.min.js"></script>
+  <style>
+    body { margin:0; overflow:hidden; background:#f8f9fa; }
+    svg { width:100vw; height:100vh; }
+    .node { cursor: grab; }
+    circle { stroke: #fff; stroke-width: 2px; }
+    text { 
+      font: 600 13px system-ui, sans-serif; 
+      fill: #fff; 
+      text-anchor: middle; 
+      dominant-baseline: middle;
+      pointer-events: none;
+      user-select: none;
+    }
+  </style>
+</head>
+<body>
+  <svg id="svg"></svg>
+
+  <script>
+    // ====================== YOUR DATA (replace with your edge-strength table) ======================
+    // Convert your table to this format (only non-zero strengths needed)
+    const graph = {
+      nodes: [
+        { id: "A", name: "Marketing" },
+        { id: "B", name: "Sales" },
+        { id: "C", name: "Product" },
+        { id: "D", name: "Engineering" },
+        { id: "E", name: "Design" },
+        // ... add all your nodes
+      ],
+      links: [
+        { source: "A", target: "B", strength: 0.95 },
+        { source: "A", target: "C", strength: 0.70 },
+        { source: "B", target: "C", strength: 0.85 },
+        { source: "C", target: "D", strength: 0.90 },
+        { source: "D", target: "E", strength: 0.60 },
+        // ... full strength table goes here
+      ]
+    };
+
+    // ====================== CONFIG ======================
+    const width = window.innerWidth;
+    const height = window.innerHeight;
+    const svg = d3.select("#svg").attr("width", width).attr("height", height);
+
+    const nodes = graph.nodes;
+    const links = graph.links;
+
+    // Bonus: colour by cluster (pre-compute once with NetworkX/Louvain and add .group to each node)
+    // Example: nodes.forEach((n,i) => n.group = i % 4); // temporary
+    const color = d3.scaleOrdinal(d3.schemeTableau10);
+
+    // ====================== FORCE SIMULATION ======================
+    const simulation = d3.forceSimulation(nodes)
+      // Strength-based attraction (higher strength = nodes pull closer → groups form)
+      .force("link", d3.forceLink(links)
+        .id(d => d.id)
+        .strength(d => d.strength)   // ← this is your edge strength
+        .distance(80))               // tune for tightness
+
+      // Global repulsion so the cloud spreads nicely
+      .force("charge", d3.forceManyBody()
+        .strength(-600)              // negative = repulsion
+        .distanceMax(300))
+
+      // Prevent any node overlap (the "without overlap" requirement)
+      .force("collision", d3.forceCollide()
+        .radius(() => 35))           // increase if names are long
+
+      // Keep the cloud centred
+      .force("center", d3.forceCenter(width / 2, height / 2))
+      .alphaDecay(0.022);
+
+    // ====================== DRAW NODES (circle + name inside) ======================
+    const nodeGroups = svg.append("g")
+      .selectAll("g")
+      .data(nodes)
+      .enter().append("g")
+        .attr("class", "node")
+        .call(d3.drag()
+          .on("start", dragStarted)
+          .on("drag", dragged)
+          .on("end", dragEnded));
+
+    nodeGroups.append("circle")
+      .attr("r", 32)
+      .attr("fill", d => color(d.group ?? d.id));   // bonus: same colour = closely related group
+
+    nodeGroups.append("text")
+      .text(d => d.name);
+
+    // ====================== LIVE ANIMATION ======================
+    simulation.on("tick", () => {
+      nodeGroups.attr("transform", d => `translate(${d.x},${d.y})`);
+    });
+
+    // ====================== INTERACTIVE DRAG ======================
+    function dragStarted(event) {
+      if (!event.active) simulation.alphaTarget(0.3).restart();
+      event.subject.fx = event.subject.x;
+      event.subject.fy = event.subject.y;
+    }
+    function dragged(event) {
+      event.subject.fx = event.x;
+      event.subject.fy = event.y;
+    }
+    function dragEnded(event) {
+      if (!event.active) simulation.alphaTarget(0);
+      event.subject.fx = null;
+      event.subject.fy = null;
+    }
+
+    // Optional: resize support
+    window.addEventListener("resize", () => {
+      const w = window.innerWidth, h = window.innerHeight;
+      svg.attr("width", w).attr("height", h);
+      simulation.force("center", d3.forceCenter(w/2, h/2)).alpha(0.3).restart();
+    });
+
+    console.log("✅ Strength Cloud Graph ready on GitHub Pages!");
+  </script>
+</body>
+</html>

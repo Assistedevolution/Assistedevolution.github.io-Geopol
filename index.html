@@ -4,55 +4,25 @@
   <meta charset="utf-8">
   <title>Interactive Strength Cloud Graph</title>
   <script src="https://d3js.org/d3.v7.min.js"></script>
-  <script src="https://cdn.jsdelivr.net/gh/upphiminn/jLouvain@master/jLouvain.js"></script>
   <style>
-    body { 
-      margin:0; 
-      font-family: system-ui, sans-serif; 
-      background:#f8f9fa; 
-      overflow:hidden; 
-    }
-    svg { 
-      width:100vw; 
-      height:calc(100vh - 160px); 
-      background:#ffffff; 
-    }
+    body { margin:0; font-family: system-ui, sans-serif; background:#f8f9fa; overflow:hidden; }
+    svg { width:100vw; height:calc(100vh - 180px); background:#ffffff; }
     .controls {
-      position: absolute; 
-      top: 10px; 
-      left: 10px; 
-      background: white; 
-      padding: 14px; 
-      border-radius: 10px;
-      box-shadow: 0 4px 15px rgba(0,0,0,0.12); 
-      z-index: 100; 
-      width: 300px;
-      font-size: 0.95em;
+      position: absolute; top: 10px; left: 10px; background: white; padding: 14px; 
+      border-radius: 10px; box-shadow: 0 4px 15px rgba(0,0,0,0.12); z-index: 100; 
+      width: 320px; font-size: 0.95em;
     }
-    .controls h3 { margin: 0 0 12px 0; }
     label { display: block; margin: 10px 0 4px; font-weight: 500; }
     input[type="range"] { width: 100%; }
-    button { 
-      padding: 8px 12px; 
-      margin: 6px 4px 6px 0; 
-      border: none; 
-      border-radius: 6px; 
-      background: #0066ff; 
-      color: white; 
-      cursor: pointer;
-    }
+    button { padding: 8px 12px; margin: 6px 4px 6px 0; border: none; border-radius: 6px; 
+             background: #0066ff; color: white; cursor: pointer; }
     button:hover { background: #0052cc; }
     button#reloadBtn { background: #28a745; }
     button#reloadBtn:hover { background: #218838; }
     .node { cursor: grab; }
     circle { stroke: #fff; stroke-width: 2.5px; }
-    text { 
-      font: 600 13px system-ui, sans-serif; 
-      fill: #fff; 
-      text-anchor: middle; 
-      dominant-baseline: middle; 
-      pointer-events: none; 
-    }
+    text { font: 600 13px system-ui, sans-serif; fill: #fff; text-anchor: middle; 
+           dominant-baseline: middle; pointer-events: none; }
   </style>
 </head>
 <body>
@@ -62,11 +32,11 @@
     <label>Global Edge Strength Multiplier: <span id="multVal">1.0</span></label>
     <input type="range" id="multiplier" min="0.1" max="3" step="0.05" value="1">
 
-    <label>Louvain Resolution: <span id="resVal">1.0</span></label>
-    <input type="range" id="resolution" min="0.5" max="3" step="0.1" value="1">
+    <label>Target Number of Communities: <span id="commVal">4</span></label>
+    <input type="range" id="numCommunities" min="2" max="8" step="1" value="4">
 
     <div>
-      <button id="recolorBtn">Detect Communities (Louvain)</button>
+      <button id="recolorBtn">Detect Communities & Recolor</button>
       <button id="randomBtn">Randomize Strengths</button>
       <button id="reloadBtn">Reload Data</button>
     </div>
@@ -84,28 +54,85 @@
     const color = d3.scaleOrdinal(d3.schemeTableau10);
 
     const width = () => window.innerWidth;
-    const height = () => window.innerHeight - 160;
+    const height = () => window.innerHeight - 180;
 
-    // ====================== LOAD DATA FROM data.json ======================
+    // ====================== LOAD DATA ======================
     function loadData() {
       d3.json("data.json").then(data => {
-        nodes = data.nodes.map(d => ({ ...d }));
+        nodes = data.nodes.map(d => ({ ...d, group: undefined }));
         links = data.links.map(d => ({ ...d }));
-        
-        console.log(`Loaded ${nodes.length} nodes and ${links.length} links`);
-        
+        console.log(`Loaded ${nodes.length} nodes, ${links.length} links`);
         initializeGraph();
       }).catch(err => {
-        console.error("Failed to load data.json", err);
-        alert("Could not load data.json\n\nMake sure the file exists in the same folder as index.html");
+        console.error(err);
+        alert("Could not load data.json — make sure it exists in the same folder.");
       });
     }
 
-    // ====================== DRAW & SIMULATION ======================
+    // ====================== SIMPLE GREEDY COMMUNITY DETECTION ======================
+    function detectCommunities(targetK) {
+      if (nodes.length < 2) return;
+
+      // Build adjacency list with strengths
+      const adj = {};
+      nodes.forEach(n => adj[n.id] = []);
+      links.forEach(l => {
+        const s = l.source.id || l.source;
+        const t = l.target.id || l.target;
+        const w = (l.strength || 0.5) * 10; // scale for better grouping
+        adj[s].push({id: t, weight: w});
+        adj[t].push({id: s, weight: w});
+      });
+
+      // Simple label propagation style (fast & effective for cloud graphs)
+      let groups = nodes.map((_, i) => i); // each node starts in its own community
+
+      for (let iter = 0; iter < 15; iter++) {  // usually converges much faster
+        let changed = false;
+        nodes.forEach((node, i) => {
+          const neighbors = adj[node.id];
+          if (!neighbors || neighbors.length === 0) return;
+
+          const count = {};
+          neighbors.forEach(nb => {
+            const gid = groups[nodes.findIndex(n => n.id === nb.id)];
+            count[gid] = (count[gid] || 0) + nb.weight;
+          });
+
+          const bestGroup = Object.keys(count).reduce((a, b) => count[a] > count[b] ? a : b);
+          const bestId = parseInt(bestGroup);
+
+          if (bestId !== groups[i]) {
+            groups[i] = bestId;
+            changed = true;
+          }
+        });
+        if (!changed) break;
+      }
+
+      // Reduce to target number of communities (merge smallest)
+      const uniqueGroups = [...new Set(groups)];
+      if (uniqueGroups.length > targetK) {
+        // Simple merge: assign smallest groups to nearest larger one (by node index)
+        const groupSizes = {};
+        groups.forEach(g => groupSizes[g] = (groupSizes[g] || 0) + 1);
+        const sorted = Object.keys(groupSizes).sort((a,b) => groupSizes[a] - groupSizes[b]);
+        const toMerge = sorted.slice(0, uniqueGroups.length - targetK);
+        groups = groups.map(g => toMerge.includes(g.toString()) ? uniqueGroups[0] : g);
+      }
+
+      // Assign final group
+      nodes.forEach((node, i) => {
+        node.group = groups[i] % 10; // cap for color palette
+      });
+
+      // Update visualization
+      if (nodeGroups) nodeGroups.select("circle").attr("fill", d => color(d.group));
+    }
+
+    // ====================== DRAW & SIMULATION (same as before) ======================
     function initializeGraph() {
       svg.selectAll("*").remove();
-      
-      // Update SVG size
       svg.attr("width", width()).attr("height", height());
 
       nodeGroups = svg.append("g")
@@ -113,17 +140,10 @@
         .data(nodes)
         .enter().append("g")
           .attr("class", "node")
-          .call(d3.drag()
-            .on("start", dragStarted)
-            .on("drag", dragged)
-            .on("end", dragEnded));
+          .call(d3.drag().on("start", dragStarted).on("drag", dragged).on("end", dragEnded));
 
-      nodeGroups.append("circle")
-        .attr("r", 34)
-        .attr("fill", d => color(d.group ?? d.id));
-
-      nodeGroups.append("text")
-        .text(d => d.name || d.id);
+      nodeGroups.append("circle").attr("r", 34).attr("fill", d => color(d.group ?? d.id));
+      nodeGroups.append("text").text(d => d.name || d.id);
 
       restartSimulation();
     }
@@ -138,7 +158,7 @@
           .id(d => d.id)
           .strength(d => (d.strength || 0.5) * mult)
           .distance(75))
-        .force("charge", d3.forceManyBody().strength(-680).distanceMax(450))
+        .force("charge", d3.forceManyBody().strength(-680))
         .force("collision", d3.forceCollide().radius(40))
         .force("center", d3.forceCenter(width()/2, height()/2))
         .alphaDecay(0.022);
@@ -150,35 +170,7 @@
       simulation.alpha(0.7).restart();
     }
 
-    // ====================== LOUVAIN COMMUNITY DETECTION ======================
-    function runLouvain() {
-      if (nodes.length === 0) return;
-
-      const nodeIds = nodes.map(n => n.id);
-      const edgeData = links.map(l => ({
-        source: typeof l.source === "object" ? l.source.id : l.source,
-        target: typeof l.target === "object" ? l.target.id : l.target,
-        weight: (l.strength || 0.5) * 100
-      }));
-
-      const community = jLouvain()
-        .nodes(nodeIds)
-        .edges(edgeData)
-        .resolution(+document.getElementById("resolution").value);
-
-      const partition = community();
-
-      nodes.forEach(node => {
-        node.group = partition[node.id] ?? 0;
-      });
-
-      // Update colors
-      nodeGroups.select("circle").attr("fill", d => color(d.group));
-      
-      restartSimulation(); // re-layout with new groups
-    }
-
-    // ====================== DRAG HANDLERS ======================
+    // Drag functions (unchanged)
     function dragStarted(event) {
       if (!event.active) simulation.alphaTarget(0.3).restart();
       event.subject.fx = event.subject.x;
@@ -203,33 +195,32 @@
       }
     });
 
-    document.getElementById("resolution").addEventListener("input", e => {
-      document.getElementById("resVal").textContent = (+e.target.value).toFixed(1);
+    document.getElementById("numCommunities").addEventListener("input", e => {
+      document.getElementById("commVal").textContent = e.target.value;
     });
 
-    document.getElementById("recolorBtn").addEventListener("click", runLouvain);
-    
+    document.getElementById("recolorBtn").addEventListener("click", () => {
+      const target = +document.getElementById("numCommunities").value;
+      detectCommunities(target);
+      restartSimulation();
+    });
+
     document.getElementById("randomBtn").addEventListener("click", () => {
       links.forEach(l => l.strength = Math.random() * 0.9 + 0.1);
       restartSimulation();
     });
 
-    document.getElementById("reloadBtn").addEventListener("click", () => {
-      loadData();   // Reload from data.json
-    });
+    document.getElementById("reloadBtn").addEventListener("click", loadData);
 
-    // ====================== INITIAL LOAD & RESIZE ======================
+    // Initial load
     loadData();
 
     window.addEventListener("resize", () => {
       if (simulation) {
         svg.attr("width", width()).attr("height", height());
-        simulation.force("center", d3.forceCenter(width()/2, height()/2));
-        simulation.alpha(0.3).restart();
+        simulation.force("center", d3.forceCenter(width()/2, height()/2)).alpha(0.3).restart();
       }
     });
-
-    console.log("✅ Interactive Strength Cloud Graph with external data.json is ready!");
   </script>
 </body>
 </html>

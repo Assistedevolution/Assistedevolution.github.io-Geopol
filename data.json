@@ -1,16 +1,85 @@
 {
   "nodes": [
-    { "id": "Marketing", "name": "Marketing" },
-    { "id": "Sales", "name": "Sales" },
-    { "id": "Product", "name": "Product" },
-    { "id": "Engineering", "name": "Engineering" },
-    { "id": "Design", "name": "Design" }
+    { "id": "USA", "name": "United States" },
+    { "id": "UK", "name": "United Kingdom" },
+    { "id": "Germany", "name": "Germany" },
+    { "id": "France", "name": "France" },
+    { "id": "Poland", "name": "Poland" },
+    { "id": "Canada", "name": "Canada" },
+    { "id": "Japan", "name": "Japan" },
+    { "id": "Australia", "name": "Australia" },
+    { "id": "India", "name": "India" },
+    { "id": "Brazil", "name": "Brazil" },
+    { "id": "China", "name": "China" },
+    { "id": "Russia", "name": "Russia" },
+    { "id": "SouthAfrica", "name": "South Africa" },
+    { "id": "Turkey", "name": "Turkey" },
+    { "id": "Iran", "name": "Iran" },
+    { "id": "SaudiArabia", "name": "Saudi Arabia" },
+    { "id": "Egypt", "name": "Egypt" },
+    { "id": "Mexico", "name": "Mexico" },
+    { "id": "SouthKorea", "name": "South Korea" },
+    { "id": "Indonesia", "name": "Indonesia" },
+    { "id": "Ukraine", "name": "Ukraine" },
+    { "id": "Israel", "name": "Israel" },
+    { "id": "Pakistan", "name": "Pakistan" },
+    { "id": "Vietnam", "name": "Vietnam" },
+    { "id": "Nigeria", "name": "Nigeria" }
   ],
   "links": [
-    { "source": "Marketing", "target": "Sales", "strength": 0.95 },
-    { "source": "Marketing", "target": "Product", "strength": 0.70 },
-    { "source": "Sales", "target": "Product", "strength": 0.85 },
-    { "source": "Product", "target": "Engineering", "strength": 0.92 },
-    { "source": "Engineering", "target": "Design", "strength": 0.65 }
+    { "source": "USA", "target": "UK", "strength": 0.92 },
+    { "source": "USA", "target": "Germany", "strength": 0.88 },
+    { "source": "USA", "target": "France", "strength": 0.85 },
+    { "source": "USA", "target": "Poland", "strength": 0.82 },
+    { "source": "USA", "target": "Canada", "strength": 0.95 },
+    { "source": "USA", "target": "Japan", "strength": 0.90 },
+    { "source": "USA", "target": "Australia", "strength": 0.89 },
+    { "source": "USA", "target": "SouthKorea", "strength": 0.87 },
+    { "source": "USA", "target": "Israel", "strength": 0.83 },
+    { "source": "USA", "target": "Ukraine", "strength": 0.78 },
+    { "source": "USA", "target": "Turkey", "strength": 0.65 },
+    { "source": "USA", "target": "India", "strength": 0.68 },
+    { "source": "USA", "target": "Mexico", "strength": 0.72 },
+
+    { "source": "UK", "target": "Germany", "strength": 0.87 },
+    { "source": "UK", "target": "France", "strength": 0.84 },
+    { "source": "Germany", "target": "France", "strength": 0.93 },
+    { "source": "Germany", "target": "Poland", "strength": 0.80 },
+    { "source": "France", "target": "Poland", "strength": 0.78 },
+
+    { "source": "China", "target": "Russia", "strength": 0.85 },
+    { "source": "China", "target": "Iran", "strength": 0.75 },
+    { "source": "China", "target": "Pakistan", "strength": 0.78 },
+    { "source": "China", "target": "Brazil", "strength": 0.72 },
+    { "source": "China", "target": "SouthAfrica", "strength": 0.70 },
+    { "source": "China", "target": "Indonesia", "strength": 0.68 },
+    { "source": "China", "target": "Vietnam", "strength": 0.55 },
+
+    { "source": "Russia", "target": "Iran", "strength": 0.80 },
+    { "source": "Russia", "target": "India", "strength": 0.65 },
+    { "source": "Russia", "target": "Turkey", "strength": 0.60 },
+    { "source": "Russia", "target": "Ukraine", "strength": 0.25 },
+
+    { "source": "India", "target": "Brazil", "strength": 0.68 },
+    { "source": "India", "target": "SouthAfrica", "strength": 0.65 },
+    { "source": "India", "target": "Japan", "strength": 0.70 },
+    { "source": "India", "target": "Australia", "strength": 0.62 },
+
+    { "source": "Brazil", "target": "SouthAfrica", "strength": 0.75 },
+    { "source": "Brazil", "target": "Mexico", "strength": 0.60 },
+
+    { "source": "SaudiArabia", "target": "Egypt", "strength": 0.82 },
+    { "source": "SaudiArabia", "target": "Turkey", "strength": 0.55 },
+    { "source": "SaudiArabia", "target": "USA", "strength": 0.75 },
+
+    { "source": "Japan", "target": "Australia", "strength": 0.85 },
+    { "source": "Japan", "target": "SouthKorea", "strength": 0.88 },
+    { "source": "Australia", "target": "SouthKorea", "strength": 0.80 },
+
+    { "source": "Turkey", "target": "Germany", "strength": 0.60 },
+    { "source": "Turkey", "target": "France", "strength": 0.55 },
+
+    { "source": "Indonesia", "target": "India", "strength": 0.62 },
+    { "source": "Nigeria", "target": "SouthAfrica", "strength": 0.70 }
   ]
 }

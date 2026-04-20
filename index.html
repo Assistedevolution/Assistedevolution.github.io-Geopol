@@ -2,63 +2,63 @@
 <html lang="en">
 <head>
   <meta charset="utf-8">
-  <title>Interactive Strength Cloud Graph</title>
+  <title>Interactive Strength Cloud – Editable Matrix</title>
   <script src="https://d3js.org/d3.v7.min.js"></script>
   <style>
     body { margin:0; font-family: system-ui, sans-serif; background:#f8f9fa; overflow:hidden; }
-    svg { width:100vw; height:calc(100vh - 190px); background:#ffffff; }
+    svg { width:100vw; height:calc(100vh - 200px); background:#ffffff; }
     
     .controls, .edit-panel {
       position: absolute; top: 10px; background: white; padding: 14px; 
-      border-radius: 10px; box-shadow: 0 4px 15px rgba(0,0,0,0.15); z-index: 100;
+      border-radius: 10px; box-shadow: 0 4px 20px rgba(0,0,0,0.15); z-index: 100;
     }
-    .controls { left: 10px; width: 340px; }
+    .controls { left: 10px; width: 360px; }
     .edit-panel { 
-      right: 10px; width: 380px; max-height: 85vh; overflow-y: auto; display: none; 
+      right: 10px; width: 460px; max-height: 88vh; overflow-y: auto; display: none; 
     }
+    h3 { margin: 0 0 12px 0; }
     label { display: block; margin: 10px 0 4px; font-weight: 500; }
     input[type="range"] { width: 100%; }
-    button { padding: 8px 12px; margin: 6px 4px 6px 0; border: none; border-radius: 6px; 
+    button { padding: 8px 12px; margin: 5px 4px 5px 0; border: none; border-radius: 6px; 
              background: #0066ff; color: white; cursor: pointer; }
     button:hover { background: #0052cc; }
-    button#reloadBtn { background: #28a745; }
-    button#editBtn { background: #17a2b8; }
-    button#editBtn:hover { background: #138496; }
-    .edge-item { margin: 12px 0; font-size: 0.92em; }
-    .edge-item label { margin-bottom: 2px; color: #333; }
-    .strength-value { float: right; font-weight: bold; color: #0066ff; }
+    button.green { background: #28a745; }
+    button.green:hover { background: #218838; }
+    .matrix-row { margin: 8px 0; padding: 6px; background: #f8f9fa; border-radius: 6px; }
+    .strength-value { float: right; font-weight: bold; color: #0066ff; min-width: 40px; text-align: right; }
     .node { cursor: grab; }
     circle { stroke: #fff; stroke-width: 2.5px; }
-    text { font: 600 13px system-ui, sans-serif; fill: #fff; text-anchor: middle; 
-           dominant-baseline: middle; pointer-events: none; }
+    text { font: 600 13px system-ui; fill: #fff; text-anchor: middle; dominant-baseline: middle; pointer-events: none; }
   </style>
 </head>
 <body>
   <div class="controls">
     <h3>Strength Cloud Controls</h3>
     
-    <label>Global Edge Strength Multiplier: <span id="multVal">1.0</span></label>
+    <label>Global Multiplier: <span id="multVal">1.0</span></label>
     <input type="range" id="multiplier" min="0.1" max="3" step="0.05" value="1">
 
-    <label>Target Number of Communities: <span id="commVal">5</span></label>
+    <label>Target Communities: <span id="commVal">5</span></label>
     <input type="range" id="numCommunities" min="2" max="10" step="1" value="5">
 
     <div>
       <button id="recolorBtn">Detect Communities & Recolor</button>
-      <button id="randomBtn">Randomize Strengths</button>
-      <button id="reloadBtn">Reload Data</button>
-      <button id="editBtn">Edit Edge Strengths</button>
+      <button id="reloadBtn" class="green">Reload Data</button>
+      <button id="editBtn">Edit Full Strength Matrix</button>
     </div>
   </div>
 
   <!-- Edit Panel -->
   <div class="edit-panel" id="editPanel">
-    <h3>Edit Edge Strengths</h3>
-    <input type="text" id="searchEdges" placeholder="Search edges..." style="width:100%; padding:8px; margin-bottom:10px;">
-    
-    <div id="edgeList"></div>
-    
+    <h3>Full Strength Matrix Editor</h3>
+    <input type="text" id="searchMatrix" placeholder="Search nodes..." style="width:100%; padding:8px; margin-bottom:10px;">
+
+    <div id="matrixContainer"></div>
+
     <div style="margin-top:15px; text-align:right;">
+      <button id="resetZeros">Set All to 0</button>
+      <button id="makeSymmetric">Make Symmetric</button>
+      <button id="downloadMatrix" class="green">Save as data.json</button>
       <button id="cancelEdit">Cancel</button>
       <button id="applyEdit">Apply & Close</button>
     </div>
@@ -68,37 +68,233 @@
 
   <script>
     let nodes = [];
+    let strengthMatrix = {};
     let links = [];
     let simulation = null;
     let nodeGroups = null;
-    let originalLinks = []; // backup for cancel
+    let originalMatrix = {};
 
     const svg = d3.select("#svg");
     const color = d3.scaleOrdinal(d3.schemeTableau10);
 
     const getWidth = () => window.innerWidth;
-    const getHeight = () => window.innerHeight - 190;
+    const getHeight = () => window.innerHeight - 200;
 
-    // ====================== LOAD DATA WITH CACHE BUSTING ======================
+    // Load data (matrix format)
     function loadData() {
       const cacheBuster = "?v=" + Date.now();
       d3.json("data.json" + cacheBuster).then(data => {
         nodes = data.nodes.map(d => ({ ...d, group: undefined }));
-        links = data.links.map(d => ({ ...d }));
-        console.log(`Loaded ${nodes.length} nodes, ${links.length} links`);
+        strengthMatrix = data.strengthMatrix || {};
+
+        // Fill missing pairs with 0 and ensure symmetry
+        nodes.forEach(n1 => {
+          if (!strengthMatrix[n1.id]) strengthMatrix[n1.id] = {};
+          nodes.forEach(n2 => {
+            if (n1.id !== n2.id) {
+              if (strengthMatrix[n1.id][n2.id] === undefined) {
+                strengthMatrix[n1.id][n2.id] = strengthMatrix[n2.id]?.[n1.id] || 0;
+              }
+            }
+          });
+        });
+
+        buildLinksFromMatrix();
         initializeGraph();
-      }).catch(err => alert("Could not load data.json"));
+      }).catch(() => alert("Could not load data.json"));
     }
 
-    // ====================== COMMUNITY DETECTION (unchanged) ======================
+    function buildLinksFromMatrix() {
+      links = [];
+      for (let i = 0; i < nodes.length; i++) {
+        for (let j = i + 1; j < nodes.length; j++) {
+          const s = nodes[i].id;
+          const t = nodes[j].id;
+          const str = strengthMatrix[s][t] || 0;
+          if (str > 0.01) {
+            links.push({ source: s, target: t, strength: str });
+          }
+        }
+      }
+    }
+
+    function initializeGraph() {
+      svg.selectAll("*").remove();
+      svg.attr("width", getWidth()).attr("height", getHeight());
+
+      nodeGroups = svg.append("g")
+        .selectAll("g")
+        .data(nodes)
+        .enter().append("g")
+          .attr("class", "node")
+          .call(d3.drag().on("start", dragStarted).on("drag", dragged).on("end", dragEnded));
+
+      nodeGroups.append("circle").attr("r", 34).attr("fill", d => color(d.group ?? Math.random()*10|0));
+      nodeGroups.append("text").text(d => d.name || d.id);
+
+      restartSimulation();
+    }
+
+    function restartSimulation() {
+      if (simulation) simulation.stop();
+      const mult = +document.getElementById("multiplier").value;
+
+      simulation = d3.forceSimulation(nodes)
+        .force("link", d3.forceLink(links).id(d => d.id)
+          .strength(d => (d.strength || 0) * mult)
+          .distance(80))
+        .force("charge", d3.forceManyBody().strength(-750))
+        .force("collision", d3.forceCollide().radius(42))
+        .force("center", d3.forceCenter(getWidth()/2, getHeight()/2))
+        .alphaDecay(0.018);
+
+      simulation.on("tick", () => {
+        nodeGroups.attr("transform", d => `translate(${d.x||0},${d.y||0})`);
+      });
+      simulation.alpha(0.7).restart();
+    }
+
+    function dragStarted(event) {
+      if (!event.active) simulation.alphaTarget(0.3).restart();
+      event.subject.fx = event.subject.x;
+      event.subject.fy = event.subject.y;
+    }
+    function dragged(event) { event.subject.fx = event.x; event.subject.fy = event.y; }
+    function dragEnded(event) {
+      if (!event.active) simulation.alphaTarget(0);
+      event.subject.fx = null; event.subject.fy = null;
+    }
+
+    // ====================== MATRIX EDITOR ======================
+    function openEditPanel() {
+      originalMatrix = JSON.parse(JSON.stringify(strengthMatrix));
+      renderMatrix("");
+      document.getElementById("editPanel").style.display = "block";
+    }
+
+    function renderMatrix(filter = "") {
+      const container = document.getElementById("matrixContainer");
+      container.innerHTML = "";
+
+      nodes.forEach((n1, i) => {
+        nodes.slice(i+1).forEach(n2 => {
+          const name1 = n1.name || n1.id;
+          const name2 = n2.name || n2.id;
+          if (filter && !name1.toLowerCase().includes(filter) && !name2.toLowerCase().includes(filter)) return;
+
+          const val = strengthMatrix[n1.id][n2.id] || 0;
+
+          const row = document.createElement("div");
+          row.className = "matrix-row";
+          row.innerHTML = `
+            <div style="display:flex; align-items:center; gap:10px;">
+              <span style="flex:1;">${name1} ↔ ${name2}</span>
+              <input type="range" min="0" max="1" step="0.01" value="${val}" 
+                     style="flex:2;" data-s="${n1.id}" data-t="${n2.id}">
+              <span class="strength-value">${val.toFixed(2)}</span>
+            </div>
+          `;
+
+          const slider = row.querySelector("input");
+          slider.addEventListener("input", e => {
+            const v = parseFloat(e.target.value);
+            strengthMatrix[n1.id][n2.id] = v;
+            strengthMatrix[n2.id][n1.id] = v;   // keep symmetric
+            row.querySelector(".strength-value").textContent = v.toFixed(2);
+
+            buildLinksFromMatrix();
+            restartSimulation();
+          });
+
+          container.appendChild(row);
+        });
+      });
+    }
+
+    // Helper buttons
+    document.getElementById("resetZeros").addEventListener("click", () => {
+      if (confirm("Set ALL strengths to 0?")) {
+        nodes.forEach(n1 => {
+          nodes.forEach(n2 => {
+            if (n1.id !== n2.id) strengthMatrix[n1.id][n2.id] = 0;
+          });
+        });
+        renderMatrix(document.getElementById("searchMatrix").value.toLowerCase());
+        buildLinksFromMatrix();
+        restartSimulation();
+      }
+    });
+
+    document.getElementById("makeSymmetric").addEventListener("click", () => {
+      nodes.forEach(n1 => {
+        nodes.forEach(n2 => {
+          if (n1.id !== n2.id) {
+            const v = strengthMatrix[n1.id][n2.id] || strengthMatrix[n2.id][n1.id] || 0;
+            strengthMatrix[n1.id][n2.id] = v;
+            strengthMatrix[n2.id][n1.id] = v;
+          }
+        });
+      });
+      renderMatrix(document.getElementById("searchMatrix").value.toLowerCase());
+      buildLinksFromMatrix();
+      restartSimulation();
+    });
+
+    document.getElementById("downloadMatrix").addEventListener("click", () => {
+      const dataToSave = {
+        nodes: nodes.map(n => ({ id: n.id, name: n.name || n.id })),
+        strengthMatrix: strengthMatrix
+      };
+      const blob = new Blob([JSON.stringify(dataToSave, null, 2)], { type: "application/json" });
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement("a");
+      a.href = url;
+      a.download = "data.json";
+      a.click();
+      URL.revokeObjectURL(url);
+    });
+
+    // Controls
+    document.getElementById("multiplier").addEventListener("input", e => {
+      document.getElementById("multVal").textContent = (+e.target.value).toFixed(1);
+      if (simulation) simulation.force("link").strength(d => (d.strength || 0) * +e.target.value).alpha(0.3).restart();
+    });
+
+    document.getElementById("numCommunities").addEventListener("input", e => {
+      document.getElementById("commVal").textContent = e.target.value;
+    });
+
+    document.getElementById("recolorBtn").addEventListener("click", () => {
+      detectCommunities(+document.getElementById("numCommunities").value);
+      restartSimulation();
+    });
+
+    document.getElementById("reloadBtn").addEventListener("click", loadData);
+    document.getElementById("editBtn").addEventListener("click", openEditPanel);
+
+    document.getElementById("cancelEdit").addEventListener("click", () => {
+      strengthMatrix = JSON.parse(JSON.stringify(originalMatrix));
+      buildLinksFromMatrix();
+      document.getElementById("editPanel").style.display = "none";
+      restartSimulation();
+    });
+
+    document.getElementById("applyEdit").addEventListener("click", () => {
+      document.getElementById("editPanel").style.display = "none";
+    });
+
+    document.getElementById("searchMatrix").addEventListener("input", e => {
+      renderMatrix(e.target.value.toLowerCase());
+    });
+
+    // Community detection (same reliable version)
     function detectCommunities(targetK) {
       if (nodes.length < 2) return;
       const adj = {};
       nodes.forEach(n => adj[n.id] = {});
       links.forEach(l => {
-        const s = l.source.id || l.source;
-        const t = l.target.id || l.target;
-        const w = Math.max(0.01, (l.strength || 0.5) * 20);
+        const s = l.source; const t = l.target;
+        const w = Math.max(0.01, (l.strength || 0) * 20);
         adj[s][t] = (adj[s][t] || 0) + w;
         adj[t][s] = (adj[t][s] || 0) + w;
       });
@@ -130,13 +326,13 @@
       community.forEach((c,i) => { groupMap[c] = groupMap[c] || []; groupMap[c].push(i); });
       let groups = Object.values(groupMap);
       while (groups.length > targetK && groups.length > 1) {
-        groups.sort((a,b)=>a.length-b.length);
+        groups.sort((a,b) => a.length - b.length);
         const small = groups.shift();
         if (groups.length) groups[0] = groups[0].concat(small);
       }
 
       nodes.forEach((node,i) => {
-        for (let g=0; g<groups.length; g++) {
+        for (let g = 0; g < groups.length; g++) {
           if (groups[g].includes(i)) { node.group = g; break; }
         }
       });
@@ -144,143 +340,7 @@
       if (nodeGroups) nodeGroups.select("circle").attr("fill", d => color(d.group));
     }
 
-    // ====================== DRAW & SIMULATION ======================
-    function initializeGraph() {
-      svg.selectAll("*").remove();
-      svg.attr("width", getWidth()).attr("height", getHeight());
-
-      nodeGroups = svg.append("g")
-        .selectAll("g")
-        .data(nodes)
-        .enter().append("g")
-          .attr("class", "node")
-          .call(d3.drag().on("start", dragStarted).on("drag", dragged).on("end", dragEnded));
-
-      nodeGroups.append("circle").attr("r", 34).attr("fill", d => color(d.group ?? Math.random()*10|0));
-      nodeGroups.append("text").text(d => d.name || d.id);
-
-      restartSimulation();
-    }
-
-    function restartSimulation() {
-      if (simulation) simulation.stop();
-      const mult = +document.getElementById("multiplier").value;
-
-      simulation = d3.forceSimulation(nodes)
-        .force("link", d3.forceLink(links).id(d => d.id)
-          .strength(d => (d.strength || 0.5) * mult)
-          .distance(80))
-        .force("charge", d3.forceManyBody().strength(-750))
-        .force("collision", d3.forceCollide().radius(42))
-        .force("center", d3.forceCenter(getWidth()/2, getHeight()/2))
-        .alphaDecay(0.018);
-
-      simulation.on("tick", () => {
-        nodeGroups.attr("transform", d => `translate(${d.x||0},${d.y||0})`);
-      });
-      simulation.alpha(0.7).restart();
-    }
-
-    function dragStarted(event) {
-      if (!event.active) simulation.alphaTarget(0.3).restart();
-      event.subject.fx = event.subject.x;
-      event.subject.fy = event.subject.y;
-    }
-    function dragged(event) {
-      event.subject.fx = event.x;
-      event.subject.fy = event.y;
-    }
-    function dragEnded(event) {
-      if (!event.active) simulation.alphaTarget(0);
-      event.subject.fx = null; event.subject.fy = null;
-    }
-
-    // ====================== EDGE EDITING ======================
-    function openEditPanel() {
-      originalLinks = links.map(l => ({...l})); // backup
-      renderEdgeList();
-      document.getElementById("editPanel").style.display = "block";
-    }
-
-    function renderEdgeList(filter = "") {
-      const container = document.getElementById("edgeList");
-      container.innerHTML = "";
-
-      const filteredLinks = links.filter(l => {
-        const s = (l.source.id || l.source).toLowerCase();
-        const t = (l.target.id || l.target).toLowerCase();
-        return s.includes(filter) || t.includes(filter);
-      });
-
-      filteredLinks.forEach((link, idx) => {
-        const sName = nodes.find(n => n.id === (link.source.id || link.source))?.name || link.source;
-        const tName = nodes.find(n => n.id === (link.target.id || link.target))?.name || link.target;
-
-        const div = document.createElement("div");
-        div.className = "edge-item";
-        div.innerHTML = `
-          <label>${sName} → ${tName}</label>
-          <input type="range" min="0" max="1" step="0.01" value="${link.strength}" 
-                 data-index="${links.indexOf(link)}">
-          <span class="strength-value">${link.strength.toFixed(2)}</span>
-        `;
-
-        const slider = div.querySelector("input");
-        slider.addEventListener("input", e => {
-          const newVal = parseFloat(e.target.value);
-          link.strength = newVal;
-          div.querySelector(".strength-value").textContent = newVal.toFixed(2);
-          // Live update
-          if (simulation) {
-            simulation.force("link").strength(d => (d.strength || 0.5) * +document.getElementById("multiplier").value);
-            simulation.alpha(0.3).restart();
-          }
-        });
-
-        container.appendChild(div);
-      });
-    }
-
-    // ====================== CONTROLS ======================
-    document.getElementById("multiplier").addEventListener("input", e => {
-      document.getElementById("multVal").textContent = (+e.target.value).toFixed(1);
-      if (simulation) simulation.force("link").strength(d => (d.strength || 0.5) * +e.target.value).alpha(0.3).restart();
-    });
-
-    document.getElementById("numCommunities").addEventListener("input", e => {
-      document.getElementById("commVal").textContent = e.target.value;
-    });
-
-    document.getElementById("recolorBtn").addEventListener("click", () => {
-      detectCommunities(+document.getElementById("numCommunities").value);
-      restartSimulation();
-    });
-
-    document.getElementById("randomBtn").addEventListener("click", () => {
-      links.forEach(l => l.strength = 0.2 + Math.random() * 0.8);
-      restartSimulation();
-    });
-
-    document.getElementById("reloadBtn").addEventListener("click", loadData);
-
-    document.getElementById("editBtn").addEventListener("click", openEditPanel);
-
-    document.getElementById("cancelEdit").addEventListener("click", () => {
-      links = originalLinks.map(l => ({...l}));
-      document.getElementById("editPanel").style.display = "none";
-      restartSimulation();
-    });
-
-    document.getElementById("applyEdit").addEventListener("click", () => {
-      document.getElementById("editPanel").style.display = "none";
-      restartSimulation();
-    });
-
-    document.getElementById("searchEdges").addEventListener("input", e => {
-      renderEdgeList(e.target.value.toLowerCase());
-    });
-
-    // Initial load
+    // Start the app
     loadData();
 
     window.addEventListener("resize", () => {

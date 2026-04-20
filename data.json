@@ -1,0 +1,16 @@
+{
+  "nodes": [
+    { "id": "Marketing", "name": "Marketing" },
+    { "id": "Sales", "name": "Sales" },
+    { "id": "Product", "name": "Product" },
+    { "id": "Engineering", "name": "Engineering" },
+    { "id": "Design", "name": "Design" }
+  ],
+  "links": [
+    { "source": "Marketing", "target": "Sales", "strength": 0.95 },
+    { "source": "Marketing", "target": "Product", "strength": 0.70 },
+    { "source": "Sales", "target": "Product", "strength": 0.85 },
+    { "source": "Product", "target": "Engineering", "strength": 0.92 },
+    { "source": "Engineering", "target": "Design", "strength": 0.65 }
+  ]
+}

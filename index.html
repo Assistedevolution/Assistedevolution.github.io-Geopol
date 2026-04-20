@@ -6,11 +6,11 @@
   <script src="https://d3js.org/d3.v7.min.js"></script>
   <style>
     body { margin:0; font-family: system-ui, sans-serif; background:#f8f9fa; overflow:hidden; }
-    svg { width:100vw; height:calc(100vh - 180px); background:#ffffff; }
+    svg { width:100vw; height:calc(100vh - 190px); background:#ffffff; }
     .controls {
       position: absolute; top: 10px; left: 10px; background: white; padding: 14px; 
       border-radius: 10px; box-shadow: 0 4px 15px rgba(0,0,0,0.12); z-index: 100; 
-      width: 320px; font-size: 0.95em;
+      width: 340px; font-size: 0.95em;
     }
     label { display: block; margin: 10px 0 4px; font-weight: 500; }
     input[type="range"] { width: 100%; }
@@ -33,13 +33,16 @@
     <input type="range" id="multiplier" min="0.1" max="3" step="0.05" value="1">
 
     <label>Target Number of Communities: <span id="commVal">4</span></label>
-    <input type="range" id="numCommunities" min="2" max="8" step="1" value="4">
+    <input type="range" id="numCommunities" min="2" max="10" step="1" value="4">
 
     <div>
       <button id="recolorBtn">Detect Communities & Recolor</button>
       <button id="randomBtn">Randomize Strengths</button>
       <button id="reloadBtn">Reload Data</button>
     </div>
+    <small style="color:#666; display:block; margin-top:8px;">
+      Tip: Increase strengths in data.json (>0.6) for clearer groups
+    </small>
   </div>
 
   <svg id="svg"></svg>
@@ -53,96 +56,126 @@
     const svg = d3.select("#svg");
     const color = d3.scaleOrdinal(d3.schemeTableau10);
 
-    const width = () => window.innerWidth;
-    const height = () => window.innerHeight - 180;
+    const getWidth = () => window.innerWidth;
+    const getHeight = () => window.innerHeight - 190;
 
     // ====================== LOAD DATA ======================
     function loadData() {
       d3.json("data.json").then(data => {
         nodes = data.nodes.map(d => ({ ...d, group: undefined }));
         links = data.links.map(d => ({ ...d }));
-        console.log(`Loaded ${nodes.length} nodes, ${links.length} links`);
+        console.log(`Loaded ${nodes.length} nodes and ${links.length} links`);
         initializeGraph();
       }).catch(err => {
         console.error(err);
-        alert("Could not load data.json — make sure it exists in the same folder.");
+        alert("Could not load data.json — check the file exists and is valid JSON.");
       });
     }
 
-    // ====================== SIMPLE GREEDY COMMUNITY DETECTION ======================
+    // ====================== IMPROVED COMMUNITY DETECTION ======================
     function detectCommunities(targetK) {
       if (nodes.length < 2) return;
 
-      // Build adjacency list with strengths
+      // Build weighted adjacency
       const adj = {};
-      nodes.forEach(n => adj[n.id] = []);
+      nodes.forEach(n => adj[n.id] = {});
       links.forEach(l => {
-        const s = l.source.id || l.source;
-        const t = l.target.id || l.target;
-        const w = (l.strength || 0.5) * 10; // scale for better grouping
-        adj[s].push({id: t, weight: w});
-        adj[t].push({id: s, weight: w});
+        const s = typeof l.source === "object" ? l.source.id : l.source;
+        const t = typeof l.target === "object" ? l.target.id : l.target;
+        const w = Math.max(0.01, (l.strength || 0.5) * 20); // stronger scaling helps
+        adj[s][t] = (adj[s][t] || 0) + w;
+        adj[t][s] = (adj[t][s] || 0) + w;
       });
 
-      // Simple label propagation style (fast & effective for cloud graphs)
-      let groups = nodes.map((_, i) => i); // each node starts in its own community
+      // Phase 1: Greedy local optimization (core of Louvain-like)
+      let community = nodes.map((_, i) => i); // start with each node in own community
 
-      for (let iter = 0; iter < 15; iter++) {  // usually converges much faster
-        let changed = false;
-        nodes.forEach((node, i) => {
-          const neighbors = adj[node.id];
-          if (!neighbors || neighbors.length === 0) return;
+      let improved = true;
+      let iterations = 0;
+      while (improved && iterations < 25) {
+        improved = false;
+        iterations++;
+        for (let i = 0; i < nodes.length; i++) {
+          const nodeId = nodes[i].id;
+          const currentComm = community[i];
 
-          const count = {};
-          neighbors.forEach(nb => {
-            const gid = groups[nodes.findIndex(n => n.id === nb.id)];
-            count[gid] = (count[gid] || 0) + nb.weight;
+          const neighborCommCount = {};
+          Object.keys(adj[nodeId] || {}).forEach(nbId => {
+            const nbIdx = nodes.findIndex(n => n.id === nbId);
+            if (nbIdx === -1) return;
+            const nbComm = community[nbIdx];
+            neighborCommCount[nbComm] = (neighborCommCount[nbComm] || 0) + adj[nodeId][nbId];
           });
 
-          const bestGroup = Object.keys(count).reduce((a, b) => count[a] > count[b] ? a : b);
-          const bestId = parseInt(bestGroup);
+          if (Object.keys(neighborCommCount).length === 0) continue;
 
-          if (bestId !== groups[i]) {
-            groups[i] = bestId;
-            changed = true;
+          // Find best community
+          let bestComm = currentComm;
+          let bestGain = 0;
+          Object.keys(neighborCommCount).forEach(c => {
+            const gain = neighborCommCount[c];
+            if (gain > bestGain) {
+              bestGain = gain;
+              bestComm = parseInt(c);
+            }
+          });
+
+          if (bestComm !== currentComm) {
+            community[i] = bestComm;
+            improved = true;
           }
-        });
-        if (!changed) break;
+        }
       }
 
-      // Reduce to target number of communities (merge smallest)
-      const uniqueGroups = [...new Set(groups)];
-      if (uniqueGroups.length > targetK) {
-        // Simple merge: assign smallest groups to nearest larger one (by node index)
-        const groupSizes = {};
-        groups.forEach(g => groupSizes[g] = (groupSizes[g] || 0) + 1);
-        const sorted = Object.keys(groupSizes).sort((a,b) => groupSizes[a] - groupSizes[b]);
-        const toMerge = sorted.slice(0, uniqueGroups.length - targetK);
-        groups = groups.map(g => toMerge.includes(g.toString()) ? uniqueGroups[0] : g);
-      }
-
-      // Assign final group
-      nodes.forEach((node, i) => {
-        node.group = groups[i] % 10; // cap for color palette
+      // Phase 2: Reduce to targetK communities by merging smallest
+      let groupMap = {};
+      community.forEach((c, i) => {
+        groupMap[c] = groupMap[c] || [];
+        groupMap[c].push(i);
       });
 
-      // Update visualization
-      if (nodeGroups) nodeGroups.select("circle").attr("fill", d => color(d.group));
+      let groups = Object.values(groupMap);
+      while (groups.length > targetK) {
+        // Merge two smallest groups
+        groups.sort((a, b) => a.length - b.length);
+        const smallest = groups.shift();
+        groups[0] = groups[0].concat(smallest);
+      }
+
+      // Assign final group IDs (0 to targetK-1)
+      nodes.forEach((node, i) => {
+        for (let g = 0; g < groups.length; g++) {
+          if (groups[g].includes(i)) {
+            node.group = g;
+            break;
+          }
+        }
+      });
+
+      // Update node colors
+      if (nodeGroups) {
+        nodeGroups.select("circle").attr("fill", d => color(d.group));
+      }
+
+      console.log(`Detected ${groups.length} communities`);
     }
 
-    // ====================== DRAW & SIMULATION (same as before) ======================
+    // ====================== DRAW & SIMULATION ======================
     function initializeGraph() {
       svg.selectAll("*").remove();
-      svg.attr("width", width()).attr("height", height());
+      svg.attr("width", getWidth()).attr("height", getHeight());
 
       nodeGroups = svg.append("g")
         .selectAll("g")
         .data(nodes)
         .enter().append("g")
           .attr("class", "node")
-          .call(d3.drag().on("start", dragStarted).on("drag", dragged).on("end", dragEnded));
+          .call(d3.drag()
+            .on("start", dragStarted)
+            .on("drag", dragged)
+            .on("end", dragEnded));
 
-      nodeGroups.append("circle").attr("r", 34).attr("fill", d => color(d.group ?? d.id));
+      nodeGroups.append("circle").attr("r", 34).attr("fill", d => color(d.group ?? Math.random()*10|0));
       nodeGroups.append("text").text(d => d.name || d.id);
 
       restartSimulation();
@@ -157,20 +190,19 @@
         .force("link", d3.forceLink(links)
           .id(d => d.id)
           .strength(d => (d.strength || 0.5) * mult)
-          .distance(75))
-        .force("charge", d3.forceManyBody().strength(-680))
-        .force("collision", d3.forceCollide().radius(40))
-        .force("center", d3.forceCenter(width()/2, height()/2))
-        .alphaDecay(0.022);
+          .distance(80))
+        .force("charge", d3.forceManyBody().strength(-750).distanceMax(500))
+        .force("collision", d3.forceCollide().radius(42))
+        .force("center", d3.forceCenter(getWidth()/2, getHeight()/2))
+        .alphaDecay(0.018);
 
       simulation.on("tick", () => {
-        nodeGroups.attr("transform", d => `translate(${d.x || 0},${d.y || 0})`);
+        nodeGroups.attr("transform", d => `translate(${d.x || 0}, ${d.y || 0})`);
       });
 
-      simulation.alpha(0.7).restart();
+      simulation.alpha(0.8).restart();
     }
 
-    // Drag functions (unchanged)
     function dragStarted(event) {
       if (!event.active) simulation.alphaTarget(0.3).restart();
       event.subject.fx = event.subject.x;
@@ -202,11 +234,11 @@
     document.getElementById("recolorBtn").addEventListener("click", () => {
       const target = +document.getElementById("numCommunities").value;
       detectCommunities(target);
-      restartSimulation();
+      restartSimulation();   // re-layout helps groups separate visually
     });
 
     document.getElementById("randomBtn").addEventListener("click", () => {
-      links.forEach(l => l.strength = Math.random() * 0.9 + 0.1);
+      links.forEach(l => l.strength = 0.2 + Math.random() * 0.8);
       restartSimulation();
     });
 
@@ -217,8 +249,8 @@
 
     window.addEventListener("resize", () => {
       if (simulation) {
-        svg.attr("width", width()).attr("height", height());
-        simulation.force("center", d3.forceCenter(width()/2, height()/2)).alpha(0.3).restart();
+        svg.attr("width", getWidth()).attr("height", getHeight());
+        simulation.force("center", d3.forceCenter(getWidth()/2, getHeight()/2)).alpha(0.4).restart();
       }
     });
   </script>

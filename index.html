@@ -7,10 +7,14 @@
   <style>
     body { margin:0; font-family: system-ui, sans-serif; background:#f8f9fa; overflow:hidden; }
     svg { width:100vw; height:calc(100vh - 190px); background:#ffffff; }
-    .controls {
-      position: absolute; top: 10px; left: 10px; background: white; padding: 14px; 
-      border-radius: 10px; box-shadow: 0 4px 15px rgba(0,0,0,0.12); z-index: 100; 
-      width: 340px; font-size: 0.95em;
+    
+    .controls, .edit-panel {
+      position: absolute; top: 10px; background: white; padding: 14px; 
+      border-radius: 10px; box-shadow: 0 4px 15px rgba(0,0,0,0.15); z-index: 100;
+    }
+    .controls { left: 10px; width: 340px; }
+    .edit-panel { 
+      right: 10px; width: 380px; max-height: 85vh; overflow-y: auto; display: none; 
     }
     label { display: block; margin: 10px 0 4px; font-weight: 500; }
     input[type="range"] { width: 100%; }
@@ -18,7 +22,11 @@
              background: #0066ff; color: white; cursor: pointer; }
     button:hover { background: #0052cc; }
     button#reloadBtn { background: #28a745; }
-    button#reloadBtn:hover { background: #218838; }
+    button#editBtn { background: #17a2b8; }
+    button#editBtn:hover { background: #138496; }
+    .edge-item { margin: 12px 0; font-size: 0.92em; }
+    .edge-item label { margin-bottom: 2px; color: #333; }
+    .strength-value { float: right; font-weight: bold; color: #0066ff; }
     .node { cursor: grab; }
     circle { stroke: #fff; stroke-width: 2.5px; }
     text { font: 600 13px system-ui, sans-serif; fill: #fff; text-anchor: middle; 
@@ -32,17 +40,28 @@
     <label>Global Edge Strength Multiplier: <span id="multVal">1.0</span></label>
     <input type="range" id="multiplier" min="0.1" max="3" step="0.05" value="1">
 
-    <label>Target Number of Communities: <span id="commVal">4</span></label>
-    <input type="range" id="numCommunities" min="2" max="10" step="1" value="4">
+    <label>Target Number of Communities: <span id="commVal">5</span></label>
+    <input type="range" id="numCommunities" min="2" max="10" step="1" value="5">
 
     <div>
       <button id="recolorBtn">Detect Communities & Recolor</button>
       <button id="randomBtn">Randomize Strengths</button>
       <button id="reloadBtn">Reload Data</button>
+      <button id="editBtn">Edit Edge Strengths</button>
     </div>
-    <small style="color:#666; display:block; margin-top:8px;">
-      Tip: Increase strengths in data.json (>0.6) for clearer groups
-    </small>
+  </div>
+
+  <!-- Edit Panel -->
+  <div class="edit-panel" id="editPanel">
+    <h3>Edit Edge Strengths</h3>
+    <input type="text" id="searchEdges" placeholder="Search edges..." style="width:100%; padding:8px; margin-bottom:10px;">
+    
+    <div id="edgeList"></div>
+    
+    <div style="margin-top:15px; text-align:right;">
+      <button id="cancelEdit">Cancel</button>
+      <button id="applyEdit">Apply & Close</button>
+    </div>
   </div>
 
   <svg id="svg"></svg>
@@ -52,6 +71,7 @@
     let links = [];
     let simulation = null;
     let nodeGroups = null;
+    let originalLinks = []; // backup for cancel
 
     const svg = d3.select("#svg");
     const color = d3.scaleOrdinal(d3.schemeTableau10);
@@ -59,105 +79,69 @@
     const getWidth = () => window.innerWidth;
     const getHeight = () => window.innerHeight - 190;
 
-    // ====================== LOAD DATA ======================
+    // ====================== LOAD DATA WITH CACHE BUSTING ======================
     function loadData() {
-      d3.json("data.json").then(data => {
+      const cacheBuster = "?v=" + Date.now();
+      d3.json("data.json" + cacheBuster).then(data => {
         nodes = data.nodes.map(d => ({ ...d, group: undefined }));
         links = data.links.map(d => ({ ...d }));
-        console.log(`Loaded ${nodes.length} nodes and ${links.length} links`);
+        console.log(`Loaded ${nodes.length} nodes, ${links.length} links`);
         initializeGraph();
-      }).catch(err => {
-        console.error(err);
-        alert("Could not load data.json — check the file exists and is valid JSON.");
-      });
+      }).catch(err => alert("Could not load data.json"));
     }
 
-    // ====================== IMPROVED COMMUNITY DETECTION ======================
+    // ====================== COMMUNITY DETECTION (unchanged) ======================
     function detectCommunities(targetK) {
       if (nodes.length < 2) return;
-
-      // Build weighted adjacency
       const adj = {};
       nodes.forEach(n => adj[n.id] = {});
       links.forEach(l => {
-        const s = typeof l.source === "object" ? l.source.id : l.source;
-        const t = typeof l.target === "object" ? l.target.id : l.target;
-        const w = Math.max(0.01, (l.strength || 0.5) * 20); // stronger scaling helps
+        const s = l.source.id || l.source;
+        const t = l.target.id || l.target;
+        const w = Math.max(0.01, (l.strength || 0.5) * 20);
         adj[s][t] = (adj[s][t] || 0) + w;
         adj[t][s] = (adj[t][s] || 0) + w;
       });
 
-      // Phase 1: Greedy local optimization (core of Louvain-like)
-      let community = nodes.map((_, i) => i); // start with each node in own community
-
-      let improved = true;
-      let iterations = 0;
+      let community = nodes.map((_, i) => i);
+      let improved = true, iterations = 0;
       while (improved && iterations < 25) {
-        improved = false;
-        iterations++;
+        improved = false; iterations++;
         for (let i = 0; i < nodes.length; i++) {
           const nodeId = nodes[i].id;
-          const currentComm = community[i];
-
-          const neighborCommCount = {};
-          Object.keys(adj[nodeId] || {}).forEach(nbId => {
-            const nbIdx = nodes.findIndex(n => n.id === nbId);
-            if (nbIdx === -1) return;
-            const nbComm = community[nbIdx];
-            neighborCommCount[nbComm] = (neighborCommCount[nbComm] || 0) + adj[nodeId][nbId];
+          const current = community[i];
+          const count = {};
+          Object.keys(adj[nodeId] || {}).forEach(nb => {
+            const idx = nodes.findIndex(n => n.id === nb);
+            if (idx === -1) return;
+            const c = community[idx];
+            count[c] = (count[c] || 0) + adj[nodeId][nb];
           });
-
-          if (Object.keys(neighborCommCount).length === 0) continue;
-
-          // Find best community
-          let bestComm = currentComm;
-          let bestGain = 0;
-          Object.keys(neighborCommCount).forEach(c => {
-            const gain = neighborCommCount[c];
-            if (gain > bestGain) {
-              bestGain = gain;
-              bestComm = parseInt(c);
-            }
+          if (Object.keys(count).length === 0) continue;
+          let best = current, bestGain = 0;
+          Object.keys(count).forEach(c => {
+            if (count[c] > bestGain) { bestGain = count[c]; best = parseInt(c); }
           });
-
-          if (bestComm !== currentComm) {
-            community[i] = bestComm;
-            improved = true;
-          }
+          if (best !== current) { community[i] = best; improved = true; }
         }
       }
 
-      // Phase 2: Reduce to targetK communities by merging smallest
       let groupMap = {};
-      community.forEach((c, i) => {
-        groupMap[c] = groupMap[c] || [];
-        groupMap[c].push(i);
-      });
-
+      community.forEach((c,i) => { groupMap[c] = groupMap[c] || []; groupMap[c].push(i); });
       let groups = Object.values(groupMap);
-      while (groups.length > targetK) {
-        // Merge two smallest groups
-        groups.sort((a, b) => a.length - b.length);
-        const smallest = groups.shift();
-        groups[0] = groups[0].concat(smallest);
+      while (groups.length > targetK && groups.length > 1) {
+        groups.sort((a,b)=>a.length-b.length);
+        const small = groups.shift();
+        if (groups.length) groups[0] = groups[0].concat(small);
       }
 
-      // Assign final group IDs (0 to targetK-1)
-      nodes.forEach((node, i) => {
-        for (let g = 0; g < groups.length; g++) {
-          if (groups[g].includes(i)) {
-            node.group = g;
-            break;
-          }
+      nodes.forEach((node,i) => {
+        for (let g=0; g<groups.length; g++) {
+          if (groups[g].includes(i)) { node.group = g; break; }
         }
       });
 
-      // Update node colors
-      if (nodeGroups) {
-        nodeGroups.select("circle").attr("fill", d => color(d.group));
-      }
-
-      console.log(`Detected ${groups.length} communities`);
+      if (nodeGroups) nodeGroups.select("circle").attr("fill", d => color(d.group));
     }
 
     // ====================== DRAW & SIMULATION ======================
@@ -170,10 +154,7 @@
         .data(nodes)
         .enter().append("g")
           .attr("class", "node")
-          .call(d3.drag()
-            .on("start", dragStarted)
-            .on("drag", dragged)
-            .on("end", dragEnded));
+          .call(d3.drag().on("start", dragStarted).on("drag", dragged).on("end", dragEnded));
 
       nodeGroups.append("circle").attr("r", 34).attr("fill", d => color(d.group ?? Math.random()*10|0));
       nodeGroups.append("text").text(d => d.name || d.id);
@@ -183,24 +164,21 @@
 
     function restartSimulation() {
       if (simulation) simulation.stop();
-
       const mult = +document.getElementById("multiplier").value;
 
       simulation = d3.forceSimulation(nodes)
-        .force("link", d3.forceLink(links)
-          .id(d => d.id)
+        .force("link", d3.forceLink(links).id(d => d.id)
           .strength(d => (d.strength || 0.5) * mult)
           .distance(80))
-        .force("charge", d3.forceManyBody().strength(-750).distanceMax(500))
+        .force("charge", d3.forceManyBody().strength(-750))
         .force("collision", d3.forceCollide().radius(42))
         .force("center", d3.forceCenter(getWidth()/2, getHeight()/2))
         .alphaDecay(0.018);
 
       simulation.on("tick", () => {
-        nodeGroups.attr("transform", d => `translate(${d.x || 0}, ${d.y || 0})`);
+        nodeGroups.attr("transform", d => `translate(${d.x||0},${d.y||0})`);
       });
-
-      simulation.alpha(0.8).restart();
+      simulation.alpha(0.7).restart();
     }
 
     function dragStarted(event) {
@@ -214,17 +192,59 @@
     }
     function dragEnded(event) {
       if (!event.active) simulation.alphaTarget(0);
-      event.subject.fx = null;
-      event.subject.fy = null;
+      event.subject.fx = null; event.subject.fy = null;
+    }
+
+    // ====================== EDGE EDITING ======================
+    function openEditPanel() {
+      originalLinks = links.map(l => ({...l})); // backup
+      renderEdgeList();
+      document.getElementById("editPanel").style.display = "block";
+    }
+
+    function renderEdgeList(filter = "") {
+      const container = document.getElementById("edgeList");
+      container.innerHTML = "";
+
+      const filteredLinks = links.filter(l => {
+        const s = (l.source.id || l.source).toLowerCase();
+        const t = (l.target.id || l.target).toLowerCase();
+        return s.includes(filter) || t.includes(filter);
+      });
+
+      filteredLinks.forEach((link, idx) => {
+        const sName = nodes.find(n => n.id === (link.source.id || link.source))?.name || link.source;
+        const tName = nodes.find(n => n.id === (link.target.id || link.target))?.name || link.target;
+
+        const div = document.createElement("div");
+        div.className = "edge-item";
+        div.innerHTML = `
+          <label>${sName} → ${tName}</label>
+          <input type="range" min="0" max="1" step="0.01" value="${link.strength}" 
+                 data-index="${links.indexOf(link)}">
+          <span class="strength-value">${link.strength.toFixed(2)}</span>
+        `;
+
+        const slider = div.querySelector("input");
+        slider.addEventListener("input", e => {
+          const newVal = parseFloat(e.target.value);
+          link.strength = newVal;
+          div.querySelector(".strength-value").textContent = newVal.toFixed(2);
+          // Live update
+          if (simulation) {
+            simulation.force("link").strength(d => (d.strength || 0.5) * +document.getElementById("multiplier").value);
+            simulation.alpha(0.3).restart();
+          }
+        });
+
+        container.appendChild(div);
+      });
     }
 
     // ====================== CONTROLS ======================
     document.getElementById("multiplier").addEventListener("input", e => {
       document.getElementById("multVal").textContent = (+e.target.value).toFixed(1);
-      if (simulation) {
-        simulation.force("link").strength(d => (d.strength || 0.5) * +e.target.value);
-        simulation.alpha(0.3).restart();
-      }
+      if (simulation) simulation.force("link").strength(d => (d.strength || 0.5) * +e.target.value).alpha(0.3).restart();
     });
 
     document.getElementById("numCommunities").addEventListener("input", e => {
@@ -232,9 +252,8 @@
     });
 
     document.getElementById("recolorBtn").addEventListener("click", () => {
-      const target = +document.getElementById("numCommunities").value;
-      detectCommunities(target);
-      restartSimulation();   // re-layout helps groups separate visually
+      detectCommunities(+document.getElementById("numCommunities").value);
+      restartSimulation();
     });
 
     document.getElementById("randomBtn").addEventListener("click", () => {
@@ -243,6 +262,23 @@
     });
 
     document.getElementById("reloadBtn").addEventListener("click", loadData);
+
+    document.getElementById("editBtn").addEventListener("click", openEditPanel);
+
+    document.getElementById("cancelEdit").addEventListener("click", () => {
+      links = originalLinks.map(l => ({...l}));
+      document.getElementById("editPanel").style.display = "none";
+      restartSimulation();
+    });
+
+    document.getElementById("applyEdit").addEventListener("click", () => {
+      document.getElementById("editPanel").style.display = "none";
+      restartSimulation();
+    });
+
+    document.getElementById("searchEdges").addEventListener("input", e => {
+      renderEdgeList(e.target.value.toLowerCase());
+    });
 
     // Initial load
     loadData();

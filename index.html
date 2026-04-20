@@ -2,105 +2,183 @@
 <html lang="en">
 <head>
   <meta charset="utf-8">
-  <title>Strength Cloud Graph</title>
+  <title>Interactive Strength Cloud Graph</title>
   <script src="https://d3js.org/d3.v7.min.js"></script>
+  <script src="https://cdn.jsdelivr.net/gh/upphiminn/jLouvain@master/jLouvain.js"></script>
   <style>
-    body { margin:0; overflow:hidden; background:#f8f9fa; }
-    svg { width:100vw; height:100vh; }
+    body { 
+      margin:0; 
+      font-family: system-ui, sans-serif; 
+      background:#f8f9fa; 
+      overflow:hidden; 
+    }
+    svg { 
+      width:100vw; 
+      height:calc(100vh - 160px); 
+      background:#ffffff; 
+    }
+    .controls {
+      position: absolute; 
+      top: 10px; 
+      left: 10px; 
+      background: white; 
+      padding: 14px; 
+      border-radius: 10px;
+      box-shadow: 0 4px 15px rgba(0,0,0,0.12); 
+      z-index: 100; 
+      width: 300px;
+      font-size: 0.95em;
+    }
+    .controls h3 { margin: 0 0 12px 0; }
+    label { display: block; margin: 10px 0 4px; font-weight: 500; }
+    input[type="range"] { width: 100%; }
+    button { 
+      padding: 8px 12px; 
+      margin: 6px 4px 6px 0; 
+      border: none; 
+      border-radius: 6px; 
+      background: #0066ff; 
+      color: white; 
+      cursor: pointer;
+    }
+    button:hover { background: #0052cc; }
+    button#reloadBtn { background: #28a745; }
+    button#reloadBtn:hover { background: #218838; }
     .node { cursor: grab; }
-    circle { stroke: #fff; stroke-width: 2px; }
+    circle { stroke: #fff; stroke-width: 2.5px; }
     text { 
       font: 600 13px system-ui, sans-serif; 
       fill: #fff; 
       text-anchor: middle; 
-      dominant-baseline: middle;
-      pointer-events: none;
-      user-select: none;
+      dominant-baseline: middle; 
+      pointer-events: none; 
     }
   </style>
 </head>
 <body>
+  <div class="controls">
+    <h3>Strength Cloud Controls</h3>
+    
+    <label>Global Edge Strength Multiplier: <span id="multVal">1.0</span></label>
+    <input type="range" id="multiplier" min="0.1" max="3" step="0.05" value="1">
+
+    <label>Louvain Resolution: <span id="resVal">1.0</span></label>
+    <input type="range" id="resolution" min="0.5" max="3" step="0.1" value="1">
+
+    <div>
+      <button id="recolorBtn">Detect Communities (Louvain)</button>
+      <button id="randomBtn">Randomize Strengths</button>
+      <button id="reloadBtn">Reload Data</button>
+    </div>
+  </div>
+
   <svg id="svg"></svg>
 
   <script>
-    // ====================== YOUR DATA (replace with your edge-strength table) ======================
-    // Convert your table to this format (only non-zero strengths needed)
-    const graph = {
-      nodes: [
-        { id: "A", name: "Marketing" },
-        { id: "B", name: "Sales" },
-        { id: "C", name: "Product" },
-        { id: "D", name: "Engineering" },
-        { id: "E", name: "Design" },
-        // ... add all your nodes
-      ],
-      links: [
-        { source: "A", target: "B", strength: 0.95 },
-        { source: "A", target: "C", strength: 0.70 },
-        { source: "B", target: "C", strength: 0.85 },
-        { source: "C", target: "D", strength: 0.90 },
-        { source: "D", target: "E", strength: 0.60 },
-        // ... full strength table goes here
-      ]
-    };
+    let nodes = [];
+    let links = [];
+    let simulation = null;
+    let nodeGroups = null;
 
-    // ====================== CONFIG ======================
-    const width = window.innerWidth;
-    const height = window.innerHeight;
-    const svg = d3.select("#svg").attr("width", width).attr("height", height);
-
-    const nodes = graph.nodes;
-    const links = graph.links;
-
-    // Bonus: colour by cluster (pre-compute once with NetworkX/Louvain and add .group to each node)
-    // Example: nodes.forEach((n,i) => n.group = i % 4); // temporary
+    const svg = d3.select("#svg");
     const color = d3.scaleOrdinal(d3.schemeTableau10);
 
-    // ====================== FORCE SIMULATION ======================
-    const simulation = d3.forceSimulation(nodes)
-      // Strength-based attraction (higher strength = nodes pull closer → groups form)
-      .force("link", d3.forceLink(links)
-        .id(d => d.id)
-        .strength(d => d.strength)   // ← this is your edge strength
-        .distance(80))               // tune for tightness
+    const width = () => window.innerWidth;
+    const height = () => window.innerHeight - 160;
 
-      // Global repulsion so the cloud spreads nicely
-      .force("charge", d3.forceManyBody()
-        .strength(-600)              // negative = repulsion
-        .distanceMax(300))
+    // ====================== LOAD DATA FROM data.json ======================
+    function loadData() {
+      d3.json("data.json").then(data => {
+        nodes = data.nodes.map(d => ({ ...d }));
+        links = data.links.map(d => ({ ...d }));
+        
+        console.log(`Loaded ${nodes.length} nodes and ${links.length} links`);
+        
+        initializeGraph();
+      }).catch(err => {
+        console.error("Failed to load data.json", err);
+        alert("Could not load data.json\n\nMake sure the file exists in the same folder as index.html");
+      });
+    }
 
-      // Prevent any node overlap (the "without overlap" requirement)
-      .force("collision", d3.forceCollide()
-        .radius(() => 35))           // increase if names are long
+    // ====================== DRAW & SIMULATION ======================
+    function initializeGraph() {
+      svg.selectAll("*").remove();
+      
+      // Update SVG size
+      svg.attr("width", width()).attr("height", height());
 
-      // Keep the cloud centred
-      .force("center", d3.forceCenter(width / 2, height / 2))
-      .alphaDecay(0.022);
+      nodeGroups = svg.append("g")
+        .selectAll("g")
+        .data(nodes)
+        .enter().append("g")
+          .attr("class", "node")
+          .call(d3.drag()
+            .on("start", dragStarted)
+            .on("drag", dragged)
+            .on("end", dragEnded));
 
-    // ====================== DRAW NODES (circle + name inside) ======================
-    const nodeGroups = svg.append("g")
-      .selectAll("g")
-      .data(nodes)
-      .enter().append("g")
-        .attr("class", "node")
-        .call(d3.drag()
-          .on("start", dragStarted)
-          .on("drag", dragged)
-          .on("end", dragEnded));
+      nodeGroups.append("circle")
+        .attr("r", 34)
+        .attr("fill", d => color(d.group ?? d.id));
 
-    nodeGroups.append("circle")
-      .attr("r", 32)
-      .attr("fill", d => color(d.group ?? d.id));   // bonus: same colour = closely related group
+      nodeGroups.append("text")
+        .text(d => d.name || d.id);
 
-    nodeGroups.append("text")
-      .text(d => d.name);
+      restartSimulation();
+    }
 
-    // ====================== LIVE ANIMATION ======================
-    simulation.on("tick", () => {
-      nodeGroups.attr("transform", d => `translate(${d.x},${d.y})`);
-    });
+    function restartSimulation() {
+      if (simulation) simulation.stop();
 
-    // ====================== INTERACTIVE DRAG ======================
+      const mult = +document.getElementById("multiplier").value;
+
+      simulation = d3.forceSimulation(nodes)
+        .force("link", d3.forceLink(links)
+          .id(d => d.id)
+          .strength(d => (d.strength || 0.5) * mult)
+          .distance(75))
+        .force("charge", d3.forceManyBody().strength(-680).distanceMax(450))
+        .force("collision", d3.forceCollide().radius(40))
+        .force("center", d3.forceCenter(width()/2, height()/2))
+        .alphaDecay(0.022);
+
+      simulation.on("tick", () => {
+        nodeGroups.attr("transform", d => `translate(${d.x || 0},${d.y || 0})`);
+      });
+
+      simulation.alpha(0.7).restart();
+    }
+
+    // ====================== LOUVAIN COMMUNITY DETECTION ======================
+    function runLouvain() {
+      if (nodes.length === 0) return;
+
+      const nodeIds = nodes.map(n => n.id);
+      const edgeData = links.map(l => ({
+        source: typeof l.source === "object" ? l.source.id : l.source,
+        target: typeof l.target === "object" ? l.target.id : l.target,
+        weight: (l.strength || 0.5) * 100
+      }));
+
+      const community = jLouvain()
+        .nodes(nodeIds)
+        .edges(edgeData)
+        .resolution(+document.getElementById("resolution").value);
+
+      const partition = community();
+
+      nodes.forEach(node => {
+        node.group = partition[node.id] ?? 0;
+      });
+
+      // Update colors
+      nodeGroups.select("circle").attr("fill", d => color(d.group));
+      
+      restartSimulation(); // re-layout with new groups
+    }
+
+    // ====================== DRAG HANDLERS ======================
     function dragStarted(event) {
       if (!event.active) simulation.alphaTarget(0.3).restart();
       event.subject.fx = event.subject.x;
@@ -116,14 +194,42 @@
       event.subject.fy = null;
     }
 
-    // Optional: resize support
-    window.addEventListener("resize", () => {
-      const w = window.innerWidth, h = window.innerHeight;
-      svg.attr("width", w).attr("height", h);
-      simulation.force("center", d3.forceCenter(w/2, h/2)).alpha(0.3).restart();
+    // ====================== CONTROLS ======================
+    document.getElementById("multiplier").addEventListener("input", e => {
+      document.getElementById("multVal").textContent = (+e.target.value).toFixed(1);
+      if (simulation) {
+        simulation.force("link").strength(d => (d.strength || 0.5) * +e.target.value);
+        simulation.alpha(0.3).restart();
+      }
     });
 
-    console.log("✅ Strength Cloud Graph ready on GitHub Pages!");
+    document.getElementById("resolution").addEventListener("input", e => {
+      document.getElementById("resVal").textContent = (+e.target.value).toFixed(1);
+    });
+
+    document.getElementById("recolorBtn").addEventListener("click", runLouvain);
+    
+    document.getElementById("randomBtn").addEventListener("click", () => {
+      links.forEach(l => l.strength = Math.random() * 0.9 + 0.1);
+      restartSimulation();
+    });
+
+    document.getElementById("reloadBtn").addEventListener("click", () => {
+      loadData();   // Reload from data.json
+    });
+
+    // ====================== INITIAL LOAD & RESIZE ======================
+    loadData();
+
+    window.addEventListener("resize", () => {
+      if (simulation) {
+        svg.attr("width", width()).attr("height", height());
+        simulation.force("center", d3.forceCenter(width()/2, height()/2));
+        simulation.alpha(0.3).restart();
+      }
+    });
+
+    console.log("✅ Interactive Strength Cloud Graph with external data.json is ready!");
   </script>
 </body>
 </html>
